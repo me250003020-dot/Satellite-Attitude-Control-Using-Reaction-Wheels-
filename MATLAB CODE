@@ -1,0 +1,205 @@
+%% ============================================
+% CubeSat Attitude Control Analysis
+% Single-Axis (X) Closed-Loop Reaction Wheel Control
+% ============================================
+clc;
+close all;
+
+%% Global Plot Styling (applies to all figures below)
+set(groot, "defaultAxesFontSize", 11);
+set(groot, "defaultLineLineWidth", 2);
+set(groot, "defaultAxesBox", "on");
+
+%% Check Variables
+disp("Available Variables:")
+whos
+
+%% Desired Angle (Current Simulation)
+theta_des = deg2rad(45);
+
+%% ============================================
+% Performance Calculations
+% ============================================
+
+% Rise Time (10% to 90%)
+idx10 = find(theta >= 0.10*theta_des, 1, "first");
+idx90 = find(theta >= 0.90*theta_des, 1, "first");
+if isempty(idx10) || isempty(idx90)
+    RiseTime = NaN;
+else
+    RiseTime = tout(idx90) - tout(idx10);
+end
+
+% Peak
+[PeakAngle, idxPeak] = max(theta);
+PeakTime = tout(idxPeak);
+
+% Overshoot
+Overshoot = max(0, (PeakAngle - theta_des)/theta_des*100);
+
+% Settling Time (2% band)
+tol = 0.02*abs(theta_des);
+SettlingTime = NaN;
+for k = 1:length(theta)
+    if max(abs(theta(k:end) - theta_des)) <= tol
+        SettlingTime = tout(k);
+        break
+    end
+end
+
+% Steady-State Error
+SteadyStateError = theta_des - theta(end);
+
+% RMS Error
+RMSError = sqrt(mean(error.^2));
+
+%% ============================================
+% Simulation Results (printed summary)
+% ============================================
+disp(" ")
+disp("========== SIMULATION RESULTS ==========")
+fprintf("Desired Angle      : %.6f rad (45 deg)\n", theta_des);
+disp(" ")
+fprintf("Rise Time          : %.3f s\n", RiseTime);
+fprintf("Peak Time          : %.3f s\n", PeakTime);
+fprintf("Overshoot          : %.2f %%\n", Overshoot);
+if isnan(SettlingTime)
+    fprintf("Settling Time      : Not settled within simulation time\n");
+else
+    fprintf("Settling Time      : %.3f s\n", SettlingTime);
+end
+disp(" ")
+fprintf("Final Angle        : %.6f rad\n", theta(end));
+fprintf("Steady State Error : %.6f rad\n", SteadyStateError);
+fprintf("RMS Error          : %.6f rad\n", RMSError);
+disp(" ")
+fprintf("Maximum Angle      : %.6f rad\n", max(theta));
+fprintf("Minimum Angle      : %.6f rad\n", min(theta));
+fprintf("Maximum Error      : %.6f rad\n", max(error));
+fprintf("Minimum Error      : %.6f rad\n", min(error));
+disp(" ")
+fprintf("Maximum Torque     : %.6f N.m\n", max(torque));
+fprintf("Minimum Torque     : %.6f N.m\n", min(torque));
+fprintf("Maximum Wheel Speed: %.6f rad/s\n", max(wheelSpeed));
+fprintf("Minimum Wheel Speed: %.6f rad/s\n", min(wheelSpeed));
+disp("========================================")
+
+%% -------------------------------
+% Graph 1 : Satellite Attitude (annotated, professional)
+% -------------------------------
+figure("Position", [100 100 750 480]);
+plot(tout, theta, "Color", [0 0.4470 0.7410]);
+hold on
+yline(theta_des, "--", "Target (45deg)", "Color", [0.4 0.4 0.4], ...
+    "LineWidth", 1.2, "LabelHorizontalAlignment", "left");
+yline(theta_des*1.02, ":", "+2%", "Color", [0.65 0.65 0.65], "LineWidth", 0.8);
+yline(theta_des*0.98, ":", "-2%", "Color", [0.65 0.65 0.65], "LineWidth", 0.8);
+plot(PeakTime, PeakAngle, "ro", "MarkerSize", 8, "LineWidth", 1.5);
+text(PeakTime, PeakAngle, sprintf("  Overshoot: %.1f%%", Overshoot), ...
+    "VerticalAlignment", "bottom", "FontSize", 10);
+if ~isnan(SettlingTime)
+    xline(SettlingTime, ":", sprintf("Settled: %.1f s", SettlingTime), ...
+        "Color", [0.3 0.6 0.3], "LineWidth", 1.2, "LabelOrientation", "horizontal");
+end
+grid on
+xlabel("Time (s)", "FontWeight", "bold");
+ylabel("Angle (rad)", "FontWeight", "bold");
+title("Satellite Attitude Response", "FontWeight", "bold");
+xlim([0 max(tout)]);
+hold off
+exportgraphics(gcf, "satellite_attitude_response.png", "Resolution", 300);
+
+%% -------------------------------
+% Graph 2 : Attitude Error
+% -------------------------------
+figure("Position", [100 100 750 480]);
+plot(tout, error, "Color", [0.8500 0.3250 0.0980]);
+hold on
+yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+grid on
+xlabel("Time (s)", "FontWeight", "bold");
+ylabel("Error (rad)", "FontWeight", "bold");
+title("Attitude Error", "FontWeight", "bold");
+xlim([0 max(tout)]);
+hold off
+exportgraphics(gcf, "attitude_error.png", "Resolution", 300);
+
+%% -------------------------------
+% Graph 3 : Control Torque
+% -------------------------------
+figure("Position", [100 100 750 480]);
+plot(tout, torque, "Color", [0.4660 0.6740 0.1880]);
+hold on
+yline(max(torque), ":", sprintf("Saturation: %.3f N.m", max(torque)), ...
+    "Color", [0.6 0.2 0.2], "LineWidth", 1);
+grid on
+xlabel("Time (s)", "FontWeight", "bold");
+ylabel("Torque (N.m)", "FontWeight", "bold");
+title("Control Torque", "FontWeight", "bold");
+xlim([0 max(tout)]);
+hold off
+exportgraphics(gcf, "control_torque.png", "Resolution", 300);
+
+%% -------------------------------
+% Graph 4 : Reaction Wheel Speed
+% -------------------------------
+figure("Position", [100 100 750 480]);
+plot(tout, wheelSpeed, "Color", [0.4940 0.1840 0.5560]);
+hold on
+yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+grid on
+xlabel("Time (s)", "FontWeight", "bold");
+ylabel("Wheel Speed (rad/s)", "FontWeight", "bold");
+title("Reaction Wheel Speed", "FontWeight", "bold");
+xlim([0 max(tout)]);
+hold off
+exportgraphics(gcf, "reaction_wheel_speed.png", "Resolution", 300);
+
+%% -------------------------------
+% All Graphs Together (combined report figure)
+% -------------------------------
+figure("Position", [50 50 1100 750]);
+
+subplot(2,2,1)
+plot(tout, theta, "Color", [0 0.4470 0.7410]);
+hold on
+yline(theta_des, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+grid on
+title("Satellite Attitude", "FontWeight", "bold")
+xlabel("Time (s)")
+ylabel("Angle (rad)")
+xlim([0 max(tout)]);
+
+subplot(2,2,2)
+plot(tout, error, "Color", [0.8500 0.3250 0.0980]);
+hold on
+yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+grid on
+title("Attitude Error", "FontWeight", "bold")
+xlabel("Time (s)")
+ylabel("Error (rad)")
+xlim([0 max(tout)]);
+
+subplot(2,2,3)
+plot(tout, torque, "Color", [0.4660 0.6740 0.1880]);
+grid on
+title("Control Torque", "FontWeight", "bold")
+xlabel("Time (s)")
+ylabel("Torque (N.m)")
+xlim([0 max(tout)]);
+
+subplot(2,2,4)
+plot(tout, wheelSpeed, "Color", [0.4940 0.1840 0.5560]);
+hold on
+yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+grid on
+title("Reaction Wheel Speed", "FontWeight", "bold")
+xlabel("Time (s)")
+ylabel("Wheel Speed (rad/s)")
+xlim([0 max(tout)]);
+
+sgtitle("Single-Axis Attitude Control -- Simulation Results", "FontWeight", "bold", "FontSize", 13);
+exportgraphics(gcf, "combined_results_4panel.png", "Resolution", 300);
+
+disp(" ")
+disp("All figures exported as high-resolution PNG files in current folder.")
