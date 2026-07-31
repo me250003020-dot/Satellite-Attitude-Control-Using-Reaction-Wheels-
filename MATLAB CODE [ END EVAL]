@@ -1,0 +1,317 @@
+%% ============================================================
+% CubeSat Attitude Control Analysis
+% 3-Axis (Roll / Pitch / Yaw) Closed-Loop Reaction Wheel Control
+% ============================================================
+% NOTE: Edit the "WORKSPACE VARIABLE NAMES" section below to match
+% the exact names of your "To Workspace" blocks in Simulink.
+% Based on your model screenshots, the expected names are:
+%   Roll_Angle , Pitch_Angle , Yaw_Angle
+%   Roll_Error , Pitch_Error , Yaw_Error
+%   Torque_X   , Torque_Y    , Torque_Z
+%   WheelSpeed_X , WheelSpeed_Y , WheelSpeed_Z
+%   tout (common simulation time vector, auto-saved by Simulink)
+%
+% The desired (step) angle for each axis is AUTO-DETECTED from your
+% logged Angle + Error signals -- so whatever value you type into the
+% DESIRED_ROLL / DESIRED_PITCH / DESIRED_YAW step blocks (45, 50, 30,
+% or anything else, in radians) will automatically flow through to
+% every calculation and every graph. No manual editing required.
+% ============================================================
+
+clc;
+close all;
+
+%% Global Plot Styling (applies to all figures below)
+set(groot, "defaultAxesFontSize", 11);
+set(groot, "defaultLineLineWidth", 2);
+set(groot, "defaultAxesBox", "on");
+
+%% Check Variables
+disp("Available Variables:")
+whos
+
+%% ============================================================
+% WORKSPACE VARIABLE NAMES  (edit if yours differ)
+% ============================================================
+angleVar = {"Roll_Angle",  "Pitch_Angle",  "Yaw_Angle"};
+errorVar = {"Roll_Error",  "Pitch_Error",  "Yaw_Error"};
+torqueVar = {"Torque_X",   "Torque_Y",     "Torque_Z"};
+wheelVar  = {"WheelSpeed_X","WheelSpeed_Y","WheelSpeed_Z"};
+axisNames = {"Roll (X)", "Pitch (Y)", "Yaw (Z)"};
+axisTag   = {"roll", "pitch", "yaw"};
+
+%% ============================================================
+% Extract & Normalize Signals (handles timeseries / struct / array)
+% ============================================================
+t      = cell(1,3);
+theta  = cell(1,3);
+err    = cell(1,3);
+torque = cell(1,3);
+wspeed = cell(1,3);
+
+for i = 1:3
+    % --- Angle signal ---
+    v = evalin("base", angleVar{i});
+    if isa(v, "timeseries")
+        t{i} = v.Time(:); theta{i} = v.Data(:);
+    elseif isstruct(v) && isfield(v,"time") && isfield(v,"signals")
+        t{i} = v.time(:); theta{i} = v.signals.values(:);
+    else
+        theta{i} = v(:); t{i} = evalin("base","tout"); t{i} = t{i}(:);
+    end
+
+    % --- Error signal ---
+    v = evalin("base", errorVar{i});
+    if isa(v, "timeseries")
+        err{i} = v.Data(:);
+    elseif isstruct(v) && isfield(v,"signals")
+        err{i} = v.signals.values(:);
+    else
+        err{i} = v(:);
+    end
+
+    % --- Torque signal ---
+    v = evalin("base", torqueVar{i});
+    if isa(v, "timeseries")
+        torque{i} = v.Data(:);
+    elseif isstruct(v) && isfield(v,"signals")
+        torque{i} = v.signals.values(:);
+    else
+        torque{i} = v(:);
+    end
+
+    % --- Wheel speed signal ---
+    v = evalin("base", wheelVar{i});
+    if isa(v, "timeseries")
+        wspeed{i} = v.Data(:);
+    elseif isstruct(v) && isfield(v,"signals")
+        wspeed{i} = v.signals.values(:);
+    else
+        wspeed{i} = v(:);
+    end
+end
+
+%% ============================================================
+% Desired Angles - AUTO-DETECTED from logged data (no hardcoding)
+% ============================================================
+% Since Error = Desired - Angle at every instant, Desired = Angle + Error
+% is constant over time. Using the median makes this robust to noise,
+% and it automatically matches whatever value you set in each step
+% block (45, 50, 30, or any other radian value) with zero editing needed.
+theta_des = zeros(1,3);
+for i = 1:3
+    theta_des(i) = median(theta{i} + err{i});
+end
+
+% --- Manual override (uncomment and edit ONLY if auto-detection above
+%     gives a wrong value, e.g. if your Error signal has an inverted sign) ---
+% theta_des = deg2rad([50, 45, 30]);   % [roll, pitch, yaw] in that order
+
+%% ============================================================
+% Performance Metrics (computed per axis)
+% ============================================================
+M = struct([]);
+for i = 1:3
+    tt   = t{i};
+    th   = theta{i};
+    thd  = theta_des(i);
+    er   = err{i};
+    tq   = torque{i};
+    ws   = wspeed{i};
+
+    m = struct();
+
+    % Rise Time (10% to 90%)
+    idx10 = find(th >= 0.10*thd, 1, "first");
+    idx90 = find(th >= 0.90*thd, 1, "first");
+    if isempty(idx10) || isempty(idx90)
+        m.RiseTime = NaN;
+    else
+        m.RiseTime = tt(idx90) - tt(idx10);
+    end
+
+    % Peak
+    [m.PeakAngle, idxPeak] = max(th);
+    m.PeakTime = tt(idxPeak);
+
+    % Overshoot
+    m.Overshoot = max(0, (m.PeakAngle - thd)/thd*100);
+
+    % Settling Time (2% band)
+    tol = 0.02*abs(thd);
+    m.SettlingTime = NaN;
+    for k = 1:length(th)
+        if max(abs(th(k:end) - thd)) <= tol
+            m.SettlingTime = tt(k);
+            break
+        end
+    end
+
+    % Steady-State Error
+    m.SteadyStateError = thd - th(end);
+
+    % RMS Error
+    m.RMSError = sqrt(mean(er.^2));
+
+    % Torque / Wheel Speed extremes
+    m.MaxTorque = max(tq);
+    m.MinTorque = min(tq);
+    m.MaxWheelSpeed = max(ws);
+    m.MinWheelSpeed = min(ws);
+
+    M = [M, m]; %#ok<AGROW>
+end
+
+%% ============================================================
+% Print Summary Table
+% ============================================================
+disp(" ")
+disp("================= 3-AXIS SIMULATION RESULTS =================")
+fprintf("%-22s %14s %14s %14s\n", "Metric", axisNames{1}, axisNames{2}, axisNames{3});
+fprintf("%-22s %14.3f %14.3f %14.3f\n", "Desired Angle (deg)", rad2deg(theta_des(1)), rad2deg(theta_des(2)), rad2deg(theta_des(3)));
+fprintf("%-22s %14.3f %14.3f %14.3f\n", "Rise Time (s)", M(1).RiseTime, M(2).RiseTime, M(3).RiseTime);
+fprintf("%-22s %14.3f %14.3f %14.3f\n", "Peak Time (s)", M(1).PeakTime, M(2).PeakTime, M(3).PeakTime);
+fprintf("%-22s %14.2f %14.2f %14.2f\n", "Overshoot (%)", M(1).Overshoot, M(2).Overshoot, M(3).Overshoot);
+fprintf("%-22s %14.3f %14.3f %14.3f\n", "Settling Time (s)", M(1).SettlingTime, M(2).SettlingTime, M(3).SettlingTime);
+fprintf("%-22s %14.6f %14.6f %14.6f\n", "Steady State Err (rad)", M(1).SteadyStateError, M(2).SteadyStateError, M(3).SteadyStateError);
+fprintf("%-22s %14.6f %14.6f %14.6f\n", "RMS Error (rad)", M(1).RMSError, M(2).RMSError, M(3).RMSError);
+fprintf("%-22s %14.6f %14.6f %14.6f\n", "Max Torque (N.m)", M(1).MaxTorque, M(2).MaxTorque, M(3).MaxTorque);
+fprintf("%-22s %14.6f %14.6f %14.6f\n", "Max Wheel Speed(rad/s)", M(1).MaxWheelSpeed, M(2).MaxWheelSpeed, M(3).MaxWheelSpeed);
+disp("===============================================================")
+
+%% ============================================================
+% Per-Axis Graphs (4 plots each: attitude, error, torque, wheel speed)
+% ============================================================
+colorAngle  = [0 0.4470 0.7410];
+colorError  = [0.8500 0.3250 0.0980];
+colorTorque = [0.4660 0.6740 0.1880];
+colorWheel  = [0.4940 0.1840 0.5560];
+
+for i = 1:3
+    % ---- Attitude Response ----
+    figure("Position", [100 100 750 480]);
+    plot(t{i}, theta{i}, "Color", colorAngle); hold on
+    yline(theta_des(i), "--", "Target", "Color", [0.4 0.4 0.4], "LineWidth", 1.2);
+    plot(M(i).PeakTime, M(i).PeakAngle, "ro", "MarkerSize", 8, "LineWidth", 1.5);
+    text(M(i).PeakTime, M(i).PeakAngle, sprintf("  Overshoot: %.1f%%", M(i).Overshoot), ...
+        "VerticalAlignment", "bottom", "FontSize", 10);
+    if ~isnan(M(i).SettlingTime)
+        xline(M(i).SettlingTime, ":", sprintf("Settled: %.1f s", M(i).SettlingTime), ...
+            "Color", [0.3 0.6 0.3], "LineWidth", 1.2);
+    end
+    grid on
+    xlabel("Time (s)", "FontWeight", "bold");
+    ylabel("Angle (rad)", "FontWeight", "bold");
+    title(sprintf("%s Attitude Response", axisNames{i}), "FontWeight", "bold");
+    xlim([0 max(t{i})]); hold off
+    exportgraphics(gcf, sprintf("%s_attitude_response.png", axisTag{i}), "Resolution", 300);
+
+    % ---- Attitude Error ----
+    figure("Position", [100 100 750 480]);
+    plot(t{i}, err{i}, "Color", colorError); hold on
+    yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+    grid on
+    xlabel("Time (s)", "FontWeight", "bold");
+    ylabel("Error (rad)", "FontWeight", "bold");
+    title(sprintf("%s Attitude Error", axisNames{i}), "FontWeight", "bold");
+    xlim([0 max(t{i})]); hold off
+    exportgraphics(gcf, sprintf("%s_attitude_error.png", axisTag{i}), "Resolution", 300);
+
+    % ---- Control Torque ----
+    figure("Position", [100 100 750 480]);
+    plot(t{i}, torque{i}, "Color", colorTorque); hold on
+    yline(max(torque{i}), ":", sprintf("Saturation: %.3f N.m", max(torque{i})), ...
+        "Color", [0.6 0.2 0.2], "LineWidth", 1);
+    grid on
+    xlabel("Time (s)", "FontWeight", "bold");
+    ylabel("Torque (N.m)", "FontWeight", "bold");
+    title(sprintf("%s Control Torque", axisNames{i}), "FontWeight", "bold");
+    xlim([0 max(t{i})]); hold off
+    exportgraphics(gcf, sprintf("%s_control_torque.png", axisTag{i}), "Resolution", 300);
+
+    % ---- Reaction Wheel Speed ----
+    figure("Position", [100 100 750 480]);
+    plot(t{i}, wspeed{i}, "Color", colorWheel); hold on
+    yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+    grid on
+    xlabel("Time (s)", "FontWeight", "bold");
+    ylabel("Wheel Speed (rad/s)", "FontWeight", "bold");
+    title(sprintf("%s Reaction Wheel Speed", axisNames{i}), "FontWeight", "bold");
+    xlim([0 max(t{i})]); hold off
+    exportgraphics(gcf, sprintf("%s_wheel_speed.png", axisTag{i}), "Resolution", 300);
+
+    % ---- Combined 4-Panel per Axis ----
+    figure("Position", [50 50 1100 750]);
+    subplot(2,2,1)
+    plot(t{i}, theta{i}, "Color", colorAngle); hold on
+    yline(theta_des(i), "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+    grid on; title(sprintf("%s Attitude", axisNames{i}), "FontWeight","bold")
+    xlabel("Time (s)"); ylabel("Angle (rad)"); xlim([0 max(t{i})]);
+
+    subplot(2,2,2)
+    plot(t{i}, err{i}, "Color", colorError); hold on
+    yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+    grid on; title(sprintf("%s Error", axisNames{i}), "FontWeight","bold")
+    xlabel("Time (s)"); ylabel("Error (rad)"); xlim([0 max(t{i})]);
+
+    subplot(2,2,3)
+    plot(t{i}, torque{i}, "Color", colorTorque);
+    grid on; title(sprintf("%s Control Torque", axisNames{i}), "FontWeight","bold")
+    xlabel("Time (s)"); ylabel("Torque (N.m)"); xlim([0 max(t{i})]);
+
+    subplot(2,2,4)
+    plot(t{i}, wspeed{i}, "Color", colorWheel); hold on
+    yline(0, "--", "Color", [0.4 0.4 0.4], "LineWidth", 1);
+    grid on; title(sprintf("%s Wheel Speed", axisNames{i}), "FontWeight","bold")
+    xlabel("Time (s)"); ylabel("Wheel Speed (rad/s)"); xlim([0 max(t{i})]);
+
+    sgtitle(sprintf("%s Axis -- Simulation Results", axisNames{i}), "FontWeight", "bold", "FontSize", 13);
+    exportgraphics(gcf, sprintf("%s_combined_4panel.png", axisTag{i}), "Resolution", 300);
+end
+
+%% ============================================================
+% Cross-Axis Comparison Figure (Roll vs Pitch vs Yaw, 2x2)
+% ============================================================
+compColors = {[0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4660 0.6740 0.1880]};
+
+figure("Position", [50 50 1200 800]);
+
+subplot(2,2,1)
+hold on
+for i = 1:3
+    plot(t{i}, theta{i}, "Color", compColors{i}, "DisplayName", axisNames{i});
+end
+grid on; legend("Location","best"); title("Attitude Comparison", "FontWeight","bold")
+xlabel("Time (s)"); ylabel("Angle (rad)"); hold off
+
+subplot(2,2,2)
+hold on
+for i = 1:3
+    plot(t{i}, err{i}, "Color", compColors{i}, "DisplayName", axisNames{i});
+end
+yline(0, "--", "Color", [0.4 0.4 0.4]);
+grid on; legend("Location","best"); title("Error Comparison", "FontWeight","bold")
+xlabel("Time (s)"); ylabel("Error (rad)"); hold off
+
+subplot(2,2,3)
+hold on
+for i = 1:3
+    plot(t{i}, torque{i}, "Color", compColors{i}, "DisplayName", axisNames{i});
+end
+grid on; legend("Location","best"); title("Control Torque Comparison", "FontWeight","bold")
+xlabel("Time (s)"); ylabel("Torque (N.m)"); hold off
+
+subplot(2,2,4)
+hold on
+for i = 1:3
+    plot(t{i}, wspeed{i}, "Color", compColors{i}, "DisplayName", axisNames{i});
+end
+yline(0, "--", "Color", [0.4 0.4 0.4]);
+grid on; legend("Location","best"); title("Wheel Speed Comparison", "FontWeight","bold")
+xlabel("Time (s)"); ylabel("Wheel Speed (rad/s)"); hold off
+
+sgtitle("3-Axis Attitude Control -- Comparison Overview", "FontWeight", "bold", "FontSize", 14);
+exportgraphics(gcf, "3axis_comparison_overview.png", "Resolution", 300);
+
+disp(" ")
+disp("All figures exported as high-resolution PNG files in current folder.")
