@@ -45,7 +45,7 @@ Two scenarios were built and simulated in Simulink:
 - **Scenario A** — Large-angle slew maneuver (commanded reorientation, e.g. a 45° attitude step).
 - **Scenario B** — Disturbance rejection (holding attitude against an external disturbance torque).
 
-Each Simulink model (`.slx`, zipped) implements the PID controller, current-loop/DC-motor-driven reaction wheel, and the disturbance environment feeding the rigid-body dynamics block.
+Each Simulink model (`.slx`, zipped) implements the PID controller, current-loop/DC-motor-driven reaction wheel, and the disturbance environment feeding the rigid-body dynamics block.Please ensure to convert .slx.zip into .slx
 
 ### 4. Analysis
 The `MATLAB CODE` script takes the logged Simulink outputs (`theta`, `error`, `torque`, `wheelSpeed`, `tout`) and computes standard control performance metrics:
